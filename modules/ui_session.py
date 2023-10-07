@@ -10,7 +10,7 @@ def create_ui():
     with gr.Tab("Session", elem_id="session-tab"):
         with gr.Row():
             with gr.Column():
-                shared.gradio['reset_interface'] = gr.Button("Apply flags/extensions and restart", interactive=not mu)
+                shared.gradio['reset_interface'] = gr.Button("Apply flags/extensions and restart", interactive=True)
                 with gr.Row():
                     shared.gradio['toggle_dark_mode'] = gr.Button('Toggle 💡')
                     shared.gradio['save_settings'] = gr.Button('Save UI defaults to settings.yaml', interactive=not mu)
