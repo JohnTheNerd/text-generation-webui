@@ -230,6 +230,9 @@ if __name__ == "__main__":
     while True:
         time.sleep(0.5)
         if shared.need_restart:
+            os.system('pkill -9 bash')
+            os.system('pkill -9 python')
+            os.system('pkill -9 python3')
             shared.need_restart = False
             time.sleep(0.5)
             shared.gradio['interface'].close()
