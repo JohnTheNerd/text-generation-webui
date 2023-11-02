@@ -8,18 +8,16 @@ RUN git clone --depth=1 https://github.com/oobabooga/GPTQ-for-LLaMa /build
 
 WORKDIR /build
 
-RUN --mount=type=cache,target=/root/.cache/pip,rw \
-    python3 -m venv /build/venv && \
+RUN python3 -m venv /build/venv && \
     . /build/venv/bin/activate && \
-    pip3 install --upgrade pip setuptools wheel && \
-    pip3 install torch torchvision torchaudio && \
+    pip3 install --upgrade pip setuptools wheel && pip3 install torch torchvision torchaudio && \
     pip3 install -r requirements.txt
 
 # https://developer.nvidia.com/cuda-gpus
 # for a rtx 2060: ARG TORCH_CUDA_ARCH_LIST="7.5"
 ARG TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-3.5;5.0;6.0;6.1;7.0;7.5;8.0;8.6+PTX}"
-RUN . /build/venv/bin/activate && \
-    python3 setup_cuda.py bdist_wheel -d .
+#RUN . /build/venv/bin/activate && \
+#    python3 setup_cuda.py bdist_wheel -d .
 
 FROM nvidia/cuda:11.8.0-runtime-ubuntu22.04
 
@@ -39,17 +37,16 @@ ARG WEBUI_VERSION
 RUN test -n "${WEBUI_VERSION}" && git reset --hard ${WEBUI_VERSION} || echo "Using provided webui source"
 
 # Create virtualenv
-RUN virtualenv /app/venv
-RUN --mount=type=cache,target=/root/.cache/pip,rw \
+RUN virtualenv /app/venv && \
     . /app/venv/bin/activate && \
     pip3 install --upgrade pip setuptools wheel && \
-    pip3 install torch torchvision torchaudio sentence_transformers xformers
+    pip3 install torch && pip3 install torchvision torchaudio sentence_transformers && pip3 install xformers
 
-# Copy and install GPTQ-for-LLaMa
-COPY --from=builder /build /app/repositories/GPTQ-for-LLaMa
-RUN --mount=type=cache,target=/root/.cache/pip,rw \
-    . /app/venv/bin/activate && \
-    pip3 install /app/repositories/GPTQ-for-LLaMa/*.whl
+## Copy and install GPTQ-for-LLaMa
+#COPY --from=builder /build /app/repositories/GPTQ-for-LLaMa
+#RUN --mount=type=cache,target=/root/.cache/pip,rw \
+#    . /app/venv/bin/activate && \
+#    pip3 install /app/repositories/GPTQ-for-LLaMa/*.whl
 
 # Install main requirements
 COPY requirements.txt /app/requirements.txt

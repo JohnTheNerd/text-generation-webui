@@ -368,7 +368,7 @@ class ChromaCollector(Collecter):
 class SentenceTransformerEmbedder(Embedder):
     def __init__(self) -> None:
         logger.debug('Creating Sentence Embedder...')
-        self.model = SentenceTransformer("sentence-transformers/all-mpnet-base-v2")
+        self.model = SentenceTransformer("/app/extensions/superboogav2/sentence_transformer/all-mpnet-base-v2")
         self.embed = self.model.encode
 
 
