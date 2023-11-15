@@ -48,7 +48,7 @@ class LlamacppHF(PreTrainedModel):
                 'n_tokens': self.model.n_tokens,
                 'input_ids': self.model.input_ids.copy(),
                 'scores': self.model.scores.copy(),
-                'ctx': llama_cpp_lib().llama_new_context_with_model(model.model, model.params)
+                'ctx': llama_cpp_lib().llama_new_context_with_model(model.model, model.context_params)
             }
 
     def _validate_model_class(self):
@@ -198,13 +198,13 @@ class LlamacppHF(PreTrainedModel):
             'n_batch': shared.args.n_batch,
             'use_mmap': not shared.args.no_mmap,
             'use_mlock': shared.args.mlock,
-            'mul_mat_q': shared.args.mul_mat_q,
+            'mul_mat_q': not shared.args.no_mul_mat_q,
             'numa': shared.args.numa,
             'n_gpu_layers': shared.args.n_gpu_layers,
             'rope_freq_base': RoPE.get_rope_freq_base(shared.args.alpha_value, shared.args.rope_freq_base),
             'tensor_split': tensor_split_list,
             'rope_freq_scale': 1.0 / shared.args.compress_pos_emb,
-            'logits_all': True,
+            'logits_all': shared.args.logits_all,
         }
 
         Llama = llama_cpp_lib().Llama
