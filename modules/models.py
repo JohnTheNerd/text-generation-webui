@@ -1,4 +1,5 @@
 import gc
+import logging
 import os
 import re
 import time
@@ -23,6 +24,7 @@ import modules.shared as shared
 from modules import RoPE, llama_attn_hijack, sampler_hijack
 from modules.logging_colors import logger
 from modules.models_settings import get_model_metadata
+from modules.relative_imports import RelativeImport
 
 transformers.logging.set_verbosity_error()
 
@@ -69,6 +71,7 @@ def load_model(model_name, loader=None):
         'ExLlamav2_HF': ExLlamav2_HF_loader,
         'ctransformers': ctransformers_loader,
         'AutoAWQ': AutoAWQ_loader,
+        'QuIP#': QuipSharp_loader,
     }
 
     metadata = get_model_metadata(model_name)
@@ -97,6 +100,14 @@ def load_model(model_name, loader=None):
         llama_attn_hijack.hijack_llama_attention()
 
     shared.settings.update({k: v for k, v in metadata.items() if k in shared.settings})
+    if loader.lower().startswith('exllama'):
+        shared.settings['truncation_length'] = shared.args.max_seq_len
+    elif loader in ['llama.cpp', 'llamacpp_HF', 'ctransformers']:
+        shared.settings['truncation_length'] = shared.args.n_ctx
+
+    logger.info(f"LOADER: {loader}")
+    logger.info(f"TRUNCATION LENGTH: {shared.settings['truncation_length']}")
+    logger.info(f"INSTRUCTION TEMPLATE: {shared.settings['instruction_template']}")
     logger.info(f"Loaded the model in {(time.time()-t0):.2f} seconds.")
     return model, tokenizer
 
@@ -107,13 +118,13 @@ def load_tokenizer(model_name, model):
     if any(s in model_name.lower() for s in ['gpt-4chan', 'gpt4chan']) and Path(f"{shared.args.model_dir}/gpt-j-6B/").exists():
         tokenizer = AutoTokenizer.from_pretrained(Path(f"{shared.args.model_dir}/gpt-j-6B/"))
     elif path_to_model.exists():
-        if shared.args.use_fast:
-            logger.info('Loading the tokenizer with use_fast=True.')
+        if shared.args.no_use_fast:
+            logger.info('Loading the tokenizer with use_fast=False.')
 
         tokenizer = AutoTokenizer.from_pretrained(
             path_to_model,
             trust_remote_code=shared.args.trust_remote_code,
-            use_fast=shared.args.use_fast
+            use_fast=not shared.args.no_use_fast
         )
 
     return tokenizer
@@ -255,13 +266,13 @@ def llamacpp_HF_loader(model_name):
         logger.error("Could not load the model because a tokenizer in transformers format was not found. Please download oobabooga/llama-tokenizer.")
         return None, None
 
-    if shared.args.use_fast:
-        logger.info('Loading the tokenizer with use_fast=True.')
+    if shared.args.no_use_fast:
+        logger.info('Loading the tokenizer with use_fast=False.')
 
     tokenizer = AutoTokenizer.from_pretrained(
         path,
         trust_remote_code=shared.args.trust_remote_code,
-        use_fast=shared.args.use_fast
+        use_fast=not shared.args.no_use_fast
     )
 
     model = LlamacppHF.from_pretrained(model_name)
@@ -309,6 +320,37 @@ def AutoAWQ_loader(model_name):
                 batch_size=1,
                 safetensors=any(model_dir.glob('*.safetensors')),
             )
+
+    return model
+
+
+def QuipSharp_loader(model_name):
+    try:
+        with RelativeImport("repositories/quip-sharp"):
+            from lib.utils.unsafe_import import model_from_hf_path
+    except:
+        logger.error(
+            "\nQuIP# has not been found. It must be installed manually for now.\n"
+            "For instructions on how to do that, please consult:\n"
+            "https://github.com/oobabooga/text-generation-webui/pull/4803\n"
+        )
+        return None, None
+
+    # This fixes duplicate logging messages after the import above.
+    handlers = logging.getLogger().handlers
+    if len(handlers) > 1:
+        logging.getLogger().removeHandler(handlers[1])
+
+    model_dir = Path(f'{shared.args.model_dir}/{model_name}')
+    if not all((model_dir / file).exists() for file in ['tokenizer_config.json', 'special_tokens_map.json', 'tokenizer.model']):
+        logger.error(f"Could not load the model because the tokenizer files could not be found in the model folder. Please download the following files from the original (unquantized) model into {model_dir}: special_tokens_map.json, tokenizer.json, tokenizer.model, tokenizer_config.json.")
+        return None, None
+
+    model, model_str = model_from_hf_path(
+        model_dir,
+        use_cuda_graph=False,
+        use_flash_attn=not shared.args.no_flash_attn
+    )
 
     return model
 
@@ -382,12 +424,12 @@ def RWKV_loader(model_name):
 
 def get_max_memory_dict():
     max_memory = {}
+    max_cpu_memory = shared.args.cpu_memory.strip() if shared.args.cpu_memory is not None else '99GiB'
     if shared.args.gpu_memory:
         memory_map = list(map(lambda x: x.strip(), shared.args.gpu_memory))
         for i in range(len(memory_map)):
             max_memory[i] = f'{memory_map[i]}GiB' if not re.match('.*ib$', memory_map[i].lower()) else memory_map[i]
 
-        max_cpu_memory = shared.args.cpu_memory.strip() if shared.args.cpu_memory is not None else '99GiB'
         max_memory['cpu'] = f'{max_cpu_memory}GiB' if not re.match('.*ib$', max_cpu_memory.lower()) else max_cpu_memory
 
     # If --auto-devices is provided standalone, try to get a reasonable value
@@ -397,13 +439,15 @@ def get_max_memory_dict():
             total_mem = (torch.xpu.get_device_properties(0).total_memory / (1024 * 1024))
         else:
             total_mem = (torch.cuda.get_device_properties(0).total_memory / (1024 * 1024))
+
         suggestion = round((total_mem - 1000) / 1000) * 1000
         if total_mem - suggestion < 800:
             suggestion -= 1000
 
         suggestion = int(round(suggestion / 1000))
         logger.warning(f"Auto-assiging --gpu-memory {suggestion} for your GPU to try to prevent out-of-memory errors. You can manually set other values.")
-        max_memory = {0: f'{suggestion}GiB', 'cpu': f'{shared.args.cpu_memory or 99}GiB'}
+        max_memory[0] = f'{suggestion}GiB'
+        max_memory['cpu'] = f'{max_cpu_memory}GiB' if not re.match('.*ib$', max_cpu_memory.lower()) else max_cpu_memory
 
     return max_memory if len(max_memory) > 0 else None
 
